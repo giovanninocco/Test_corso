@@ -1,122 +1,135 @@
 import requests
 from bs4 import BeautifulSoup
 import scraping
+import pandas as pd 
+import re
+import matplotlib.pyplot as plt
+import numpy as np
 
 url = 'https://www.imdb.com/chart/top/'
-scraping = scraping.Scraping()
-scraping.load_dictionary(url)
-'''
-title_list = []
-date_list = []
-rating_list = []
-budget_list =[]
-revenue_list = [] 
-ranking_list = [] 
+dictionary_path = '.\\..\\data\\dictionary.json'
+items = 250 #MAX 250
+scraping = scraping.Scraping(dictionary_path, items)
+movie_dict = scraping.load_dictionary(url)
 
-movie_dict = {}
- 
-# Effettua la richiesta GET alla pagina
-response = requests.get(url)
+#Creazione del dataframe a partire dal dizzionario 
+df = pd.DataFrame(movie_dict)
 
-# Verifica lo stato della risposta
-if response.status_code == 200:
-    soup = BeautifulSoup(response.text, 'html.parser')
-    movie_links = []
+#Invertire le righe con le colonne
+df = df.transpose()
 
-    # Trova tutti gli elementi <td> con la classe "titleColumn"
-    movie_cells = soup.find_all('td', class_='titleColumn')
+#Pulizia del dataframe
+#Rimuovo tutti i record che non hanno i valori in dollari
+df = df[df['budget'].str.contains('\$', na=True)]
+df = df[df['revenue'].str.contains('\$', na=True)]
 
-    # Estrai il link di ciascun film
-    for cell in movie_cells:
-        link = cell.a['href']
-        movie_links.append('https://www.imdb.com' + link)
+#Rimozione simboli valute nelle colonne budget e revenue
+df['budget'] = df['budget'].apply(lambda x: re.sub(r'[^\d.,]+', '', x))
+df['revenue'] = df['revenue'].apply(lambda x: re.sub(r'[^\d.,]+', '', x))
 
-    # Stampa la lista dei link dei film
-    #for link in movie_links:
-    #    print(link)
+#Rimozione delle virgole nell colonne budget e revenue
+df['budget'] = df['budget'].str.replace(',', '')
+df['revenue'] = df['revenue'].str.replace(',', '')
 
-else:
-    print('Errore nella richiesta GET:', response.status_code)
+#Cambio il tipo nelle colonne budget e revenue da str a float
+df['budget'] = df['budget'].astype(float)
+df['revenue'] = df['revenue'].astype(float)
 
+df['date'] = df['date'].astype(int)
 
+# Converti la colonna del budget in numeri
+df['budget'] = pd.to_numeric(df['budget'], errors='coerce')
 
-# Effettua la richiesta GET alla pagina web con un'intestazione User-Agent personalizzata
+# Calcola la media del budget
+media_budget = df['budget'].mean()
 
-for _, elemento in enumerate(movie_links):
-    link = elemento if _ < len(movie_links) else None
+# Filtra i valori che superano 360000000 nella colonna del budget
+df.loc[df['budget'] > 360000000, 'budget'] = media_budget
 
-    url = link
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3"
-    }
-    response = requests.get(url, headers=headers)
+#Rimosso la notazione scentiva all'interno del dataframe 
+pd.set_option('display.float_format', '{:.2f}'.format)
 
-    # Controlla se la richiesta è andata a buon fine
-    if response.status_code == 200:
-        # Parsing del contenuto della pagina con BeautifulSoup
-        soup = BeautifulSoup(response.content, "html.parser")
+#Controllo presenza valori nulli all'inerno del dataframe
+valori_nulli_colonne = df.isnull().sum()
+print(valori_nulli_colonne)
+print('--------------------------------------------------------------------')
 
-        # Estrai il titolo del film
-        title_tmp = soup.select_one('[data-testid="hero__pageTitle"]')
-        if title_tmp != None:
-            title = title_tmp.contents[0].text
+#Creo una funzione per ricavere il decennio di uscita
+def get_decade(anno):
+    decennio = str(anno)[-2:-1] + "0"
+    return decennio
 
-        # Estrai il budget del film
-        budget_tmp = soup.select_one('[data-testid="title-boxoffice-budget"]')
-        if budget_tmp != None:
-            budget = budget_tmp.contents[1].text
-            budget = budget.split(' ')[0]
+#Creo una nuova colonna che indici il decennio di uscita del film 
+df['decade'] = df['date'].apply(get_decade)
 
-        # Estrai i ricavi del film 
-        revenue_tmp = soup.select_one('[data-testid="title-boxoffice-cumulativeworldwidegross"]') 
-        if revenue_tmp != None:
-            revenue = revenue_tmp.contents[1].text
+#Creo una nuova colonna che indici il profitto per ogni film 
+df['profit'] = (df['revenue'] - df['budget']) / df['budget'] * 100
 
-        # Estrai la data di uscita del film
-        date_tmp = soup.select_one('[data-testid="title-boxoffice-openingweekenddomestic"]')
-        if date_tmp != None:
-            date = date_tmp.contents[1].text
-            date = date.split(', ')[-1]
+df = df.reset_index()
 
-        # Estrai il rating del film
-        rating_temp = soup.select_one('[data-testid="hero-rating-bar__aggregate-rating__score"]')
-        if rating_temp != None:
-            rating = rating_temp.contents[0].text
+#Statistica di base 
+print(df.describe())
+print('--------------------------------------------------------------------')
 
-        title_list.append(title)
-        date_list.append(date)
-        rating_list.append(rating)
-        ranking_list.append(_+1)
-        budget_list.append(budget)
-        revenue_list.append(revenue)
-
-        # Stampa le informazioni del film
-#        print("Title:", title)
-#        print("Release date:", date)
-#        print("Rating:", rating)
-#        print("Ranking:", _+1)
-#        print("Budget:", budget)
-#        print("Revenu:", revenue)
-#        print("-------------------------------------------------------------------------")
-    else:
-        print("Errore nella richiesta HTTP:", response.status_code)
-
-#print("Title:", title_list)
-#print("Release date:", date_list)
-#print("Rating:", rating_list)
-#print("Ranking:", ranking_list)
-#print("Budget:", budget_list)
-#print("Revenue:", revenue_list)
-#print("-------------------------------------------------------------------------")
+#film con budget più alto
+film_budget_max = df.loc[df['budget'].idxmax()]
+print("Il film con il budget più alto è:\n", film_budget_max)
+print('--------------------------------------------------------------------')
 
 
-for i in range(len(title_list)):
-    movie_dict[title_list[i]] = {
-        "date": date_list[i],
-        "rating": rating_list[i],
-        "budget": budget_list[i],
-        "revenue": revenue_list[i],
-        "ranking": ranking_list[i]
-    }
+#Film con profitto più alto 
+film_profit_max = df.loc[df['profit'].idxmax()]
+print("Il film con il profitto più alto è:\n", film_profit_max)
+print('--------------------------------------------------------------------')
 
-print(movie_dict)'''
+
+#Film più nuovo
+film_oldest = df.loc[df['date'].idxmax()]
+print("Il film più nuovo è:\n", film_oldest)
+print('--------------------------------------------------------------------')
+
+#Correlazioni
+# Estrai le colonne di interesse come array NumPy
+budget = df['budget'].to_numpy(dtype=np.float64)
+revenue = df['revenue'].to_numpy(dtype=np.float64)
+
+# Calcola la correlazione utilizzando np.corrcoef()
+correlation = np.corrcoef(budget, revenue)[0, 1]
+print(correlation)
+
+# Creazione del grafico di dispersione
+plt.scatter(budget, revenue)
+plt.title("Correlazione tra Budget e Revenue")
+plt.xlabel("Budget")
+plt.ylabel("Revenue")
+plt.grid(True)
+
+# Stampa della correlazione nel grafico
+plt.text(1e10, 1e10, f"Correlazione: {correlation:.2f}", color='red')
+
+# Mostra il grafico
+plt.show()
+
+#Grafici delle correlazioni
+# Estrai le colonne di interesse come array NumPy
+profit = df['profit'].to_numpy(dtype=np.float64)
+budget = df['budget'].to_numpy(dtype=np.float64)
+
+# Calcola la correlazione utilizzando np.corrcoef()
+correlation = np.corrcoef(profit, budget)[0, 1]
+print(correlation)
+# Creazione del grafico di dispersione
+plt.scatter(profit, budget)
+plt.title("Correlazione tra Profit e Budget")
+plt.xlabel("Profit")
+plt.ylabel("Budget")
+plt.grid(True)
+
+# Stampa della correlazione nel grafico
+plt.text(1e10, 1e8, f"Correlazione: {correlation:.2f}", color='red')
+
+# Mostra il grafico
+plt.show()
+
+
+
